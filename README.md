@@ -9,7 +9,7 @@
  * =============================================================================================
  * 🧠 TỔNG QUAN HỆ THỐNG
  * - Đồng hồ IoT khung thau hở mô phỏng vệ tinh mini
- * - ESP32/ESP8266 + OLED SSD1306 (I2C)
+ * - ESP32C3 SUPER MINI + OLED SSD1306 (I2C)
  * - Cảm biến SHT31 đo nhiệt độ / độ ẩm
  * - Kiến trúc open-frame: ưu tiên cơ khí, tản nhiệt và dễ bảo trì
  *
