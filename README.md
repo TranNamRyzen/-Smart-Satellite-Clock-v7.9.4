@@ -1,10 +1,12 @@
 /* =============================================================================================
- * 🚀 SMART SATELLITE SYSTEM - v12.2 ESP32 C3 SUPER MINI
+ * 🚀 SMART SATELLITE SYSTEM - v12.5 (RANDOM NIGHT SKY EDITION)
+ * ESP32C3 SUPER MINI + OLED 128x32 Pixel + SENSOR SHT3X
  * [PROJECT MANAGER]  : TRAN NAM
- * SOURCE CORE        : HuyVector & Gemini AI Collaborator
- * NOTE               : Đã xóa API Key và Địa điểm cá nhân để bảo mật khi chia sẻ.
+ * SOURCE DESIGN      : HuyVector & Gemini AI Collaborator
+ * ĐỒ HỌA NÂNG CẤP     : Sao đêm nhảy vị trí NGẪU NHIÊN (Random) khi có mây trôi | Mượt mà 100%
  * =============================================================================================
  */
+
 #include <Wire.h>                 
 #include <Adafruit_GFX.h>         
 #include <Adafruit_SSD1306.h>     
@@ -84,6 +86,13 @@ static int8_t textShiftX = 0;
 static int8_t iconShiftX = 0, iconShiftY = 0;  
 static unsigned long lastShiftTime = 0;        
 
+// --- BIẾN LƯU TỌA ĐỘ RANDOM CHO SAO ĐÊM ---
+static int starRandX1 = 6;
+static int starRandY1 = 100;
+static int starRandX2 = 22;
+static int starRandY2 = 115;
+static unsigned long lastStarRandomTime = 0;
+
 // --- BITMAPS CẢI TIẾN CHUẨN ĐỒ HỌA MỚI ---
 const uint8_t icon_Trang_Khuyet_Nho[] PROGMEM = {
   0x03, 0x80, 0x07, 0x00, 0x0e, 0x00, 0x0c, 0x00, 0x0c, 0x00, 0x0e, 0x00, 0x07, 0x00, 0x03, 0x80
@@ -154,7 +163,7 @@ void drawCyberLaserLines(int y1, int y2) {
   display.drawFastHLine(0, y2, 32, SSD1306_WHITE);
 }
 
-// --- HÀM VẼ ICON TẦNG 3 (ĐÃ SỬA: BỎ HOÀN TOÀN GIẬT LADE) ---
+// --- HÀM VẼ ICON TẦNG 3 (ĐÃ CẬP NHẬT RANDOM SAO ĐÊM) ---
 void veChuyenTrangIconFooter(int x_icon_base, int y_icon, bool checkDem, unsigned long currentMillis) {
   int x = x_icon_base + iconShiftX; 
   int y = y_icon + iconShiftY;
@@ -193,13 +202,24 @@ void veChuyenTrangIconFooter(int x_icon_base, int y_icon, bool checkDem, unsigne
       display.drawPixel(x - (d-1), y + (d-1), SSD1306_WHITE); display.drawPixel(x + (d-1), y + (d-1), SSD1306_WHITE);
     }
   }
-  // --- TRẠNG THÁI MÂY (ĐÊM: BỎ TRĂNG - MÂY TRÔI ĐÈ SAO) ---
+  // --- TRẠNG THÁI MÂY (ĐÊM: BỎ TRĂNG - MÂY TRÔI ĐÈ SAO RANDOM) ---
   else if (trangThaiThoiTiet == "MAY") {
     if (checkDem) {
-      if ((currentMillis / 700) % 2 == 0) {
-        display.drawPixel(8 + iconShiftX, y - 6, SSD1306_WHITE);  
-        display.drawPixel(24 + iconShiftX, y + 8, SSD1306_WHITE); 
+      // Cứ sau mỗi 1.4 giây (sau khi sao tắt và bật lại), đổi vị trí ngẫu nhiên cho sinh động
+      if (currentMillis - lastStarRandomTime >= 1400) {
+        lastStarRandomTime = currentMillis;
+        starRandX1 = random(2, 14);  // Random trong khu vực nửa trái vùng quét dọc
+        starRandY1 = random(98, 108);
+        starRandX2 = random(18, 30); // Random trong khu vực nửa phải vùng quét dọc
+        starRandY2 = random(110, 122);
       }
+
+      // Nhịp hiển thị nhấp nháy cho sao
+      if ((currentMillis / 700) % 2 == 0) {
+        display.drawPixel(starRandX1 + iconShiftX, starRandY1 + iconShiftY, SSD1306_WHITE);  
+        display.drawPixel(starRandX2 + iconShiftX, starRandY2 + iconShiftY, SSD1306_WHITE); 
+      }
+      // Vẽ mây đè lên sao
       display.drawBitmap(X_may1 + iconShiftX, y - 6, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
       display.drawBitmap(X_may2 + iconShiftX, y + 2, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
     } else {
