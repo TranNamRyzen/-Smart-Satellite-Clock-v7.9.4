@@ -5,7 +5,6 @@
  * NOTE               : Đã xóa API Key và Địa điểm cá nhân để bảo mật khi chia sẻ.
  * =============================================================================================
  */
-
 #include <Wire.h>                 
 #include <Adafruit_GFX.h>         
 #include <Adafruit_SSD1306.h>     
@@ -49,10 +48,10 @@ bool portalStarted = false;
 
 WiFiManager wm;
 
-// --- OPENWEATHERMAP (THAY ĐỔI THÔNG TIN TẠI ĐÂY KHI CẦN) ---
-String apiKey = ""; // Nhập OpenWeatherMap API Key của bạn vào đây
-String lat = "0.0000";   // Nhập Vĩ độ (Latitude) vùng của bạn
-String lon = "0.0000";  // Nhập Kinh độ (Longitude) vùng của bạn
+// --- OPENWEATHERMAP ---
+String apiKey = "faeeb2ffc93fba572b6717dcc030ec59";
+String lat = "10.4851";
+String lon = "105.6176";
 String serverPath = "http://api.openweathermap.org/data/2.5/weather?lat=" + lat + "&lon=" + lon + "&appid=" + apiKey + "&units=metric";
 String trangThaiThoiTiet = "NANG";         
 bool coDuLieuOnline = false;               
@@ -69,7 +68,7 @@ unsigned long lastScrollTime = 0;
 unsigned long waitStartTime = 0;
 bool dangChoNghi20s = false;               
 String chuoiChayTongHop = "";              
-String chuoiChayOwmDungSan = "TRST - SATELLITE STATION"; 
+String chuoiChayOwmDungSan = "P.MY NGAI-P.CAO LANH, DONG THAP"; 
 
 // --- TỌA ĐỘ 2 ĐÁM MÂY BAY LƯỚT LỆCH PHA TẦNG 3 ---
 int X_may1 = -16; 
@@ -85,10 +84,9 @@ static int8_t textShiftX = 0;
 static int8_t iconShiftX = 0, iconShiftY = 0;  
 static unsigned long lastShiftTime = 0;        
 
-// --- BITMAPS CẢI TIẾN CHUẨN ĐỒ HỌA ---
-const uint8_t icon_Trang_Khuyet_Chuan[] PROGMEM = {
-  0x03, 0xe0, 0x0f, 0x80, 0x1e, 0x00, 0x3c, 0x00, 0x38, 0x00, 0x70, 0x00,
-  0x70, 0x00, 0x38, 0x00, 0x3c, 0x00, 0x1e, 0x00, 0x0f, 0x80, 0x03, 0xe0
+// --- BITMAPS CẢI TIẾN CHUẨN ĐỒ HỌA MỚI ---
+const uint8_t icon_Trang_Khuyet_Nho[] PROGMEM = {
+  0x03, 0x80, 0x07, 0x00, 0x0e, 0x00, 0x0c, 0x00, 0x0c, 0x00, 0x0e, 0x00, 0x07, 0x00, 0x03, 0x80
 };
 
 const uint8_t icon_Set_Cai_Tien[] PROGMEM = {
@@ -108,8 +106,6 @@ void recoverI2CBus() {
 }
 
 void layThoiTietVeTinhOnline() {
-  if (apiKey == "" || lat == "0.0000") return; // Chặn chạy ngầm nếu chưa cấu hình thông tin mạng
-  
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http; http.begin(serverPath); http.setTimeout(3000); 
     int httpResponseCode = http.GET();
@@ -134,7 +130,7 @@ void layThoiTietVeTinhOnline() {
       
       char formatCheck[32];
       snprintf(formatCheck, sizeof(formatCheck), " (OWM SYNC AT: %02d:%02d)", gioCapNhatAPI, phutCapNhatAPI);
-      chuoiChayOwmDungSan = String(F("TRST - SATELLITE STATION")) + String(formatCheck);
+      chuoiChayOwmDungSan = String(F("P.MY NGAI-P.CAO LANH, DONG THAP")) + String(formatCheck);
       
     } else { coDuLieuOnline = false; }
     http.end();
@@ -153,20 +149,19 @@ void trySyncTime() {
   }
 }
 
-// --- HÀM VẼ 2 THANH NGANG ĐỂ YÊN KHÔNG HIỆU ỨNG (CHUẨN 32PX CHO MÀN HÌNH DỌC) ---
 void drawCyberLaserLines(int y1, int y2) {
   display.drawFastHLine(0, y1, 32, SSD1306_WHITE);
   display.drawFastHLine(0, y2, 32, SSD1306_WHITE);
 }
 
-// --- HÀM VẼ FOOTER TẦNG 3 CHU TRÌNH FADE MỜ DẦN VÀ RESET KHOẢNG TẮT ĐEN 0.2S ---
+// --- HÀM VẼ ICON TẦNG 3 (ĐÃ SỬA: BỎ HOÀN TOÀN GIẬT LADE) ---
 void veChuyenTrangIconFooter(int x_icon_base, int y_icon, bool checkDem, unsigned long currentMillis) {
   int x = x_icon_base + iconShiftX; 
   int y = y_icon + iconShiftY;
   unsigned long pulseModulo = currentMillis % 15000;
 
+  // 7 giây đầu hiển thị cảm biến Nhiệt độ / Độ ẩm bình thường
   if (pulseModulo < 7000) {
-    if (pulseModulo > 6700) { if ((currentMillis % 2) == 0) return; }
     if (isSensorOnline && !isnan(filteredTemp) && !isnan(filteredHum)) {
       display.setCursor(1 + textShiftX, 102); 
       display.print((int)filteredTemp); display.print((char)247); display.print(F("C")); 
@@ -179,16 +174,16 @@ void veChuyenTrangIconFooter(int x_icon_base, int y_icon, bool checkDem, unsigne
     return;
   }
 
-  if (pulseModulo >= 14800) { display.fillRect(0, 96, 32, 32, SSD1306_BLACK); return; }
-  if (pulseModulo >= 7000 && pulseModulo < 7300) { if ((currentMillis % 3) == 0) return; }
-
+  // --- TRẠNG THÁI NĂNG (ĐÊM: TRĂNG NHỎ + SAO NHÁY CHỚP) ---
   if (trangThaiThoiTiet == "NANG") {
     if (checkDem) {
-      int x_trang = 16 + iconShiftX; int y_trang = y - 6;
-      display.drawBitmap(x_trang, y_trang, icon_Trang_Khuyet_Chuan, 12, 12, SSD1306_WHITE); 
-      if ((currentMillis / 250) % 3 == 0) display.drawPixel(x_trang - 6, y_trang - 2, SSD1306_WHITE); 
-      if ((currentMillis / 350) % 3 == 1) display.drawPixel(x_trang + 18, y_trang + 4, SSD1306_WHITE);
-      if ((currentMillis / 450) % 3 == 2) display.drawPixel(x_trang + 4, y_trang + 15, SSD1306_WHITE);
+      int x_trang = 12 + iconShiftX; int y_trang = y - 4; // Căn giữa chuẩn
+      display.drawBitmap(x_trang, y_trang, icon_Trang_Khuyet_Nho, 8, 8, SSD1306_WHITE); 
+      if ((currentMillis / 500) % 2 == 0) {
+        display.drawPixel(x_trang - 4, y_trang - 2, SSD1306_WHITE); 
+        display.drawPixel(x_trang + 10, y_trang + 6, SSD1306_WHITE); 
+        display.drawPixel(x_trang + 3, y_trang + 9, SSD1306_WHITE); 
+      }
     } else {
       display.fillCircle(x, y, 3, SSD1306_WHITE); 
       int d = 5 + ((currentMillis / 200) % 2) * 2;
@@ -198,14 +193,15 @@ void veChuyenTrangIconFooter(int x_icon_base, int y_icon, bool checkDem, unsigne
       display.drawPixel(x - (d-1), y + (d-1), SSD1306_WHITE); display.drawPixel(x + (d-1), y + (d-1), SSD1306_WHITE);
     }
   }
+  // --- TRẠNG THÁI MÂY (ĐÊM: BỎ TRĂNG - MÂY TRÔI ĐÈ SAO) ---
   else if (trangThaiThoiTiet == "MAY") {
     if (checkDem) {
-      int x_trang = 16 + iconShiftX; int y_trang = y - 6;
-      display.drawBitmap(x_trang, y_trang, icon_Trang_Khuyet_Chuan, 12, 12, SSD1306_WHITE);
-      
-      int mx1 = X_may1 + iconShiftX; int mx2 = X_may2 + iconShiftX;
-      if (mx1 < x_trang - 14 || mx1 > x_trang + 10) display.drawBitmap(mx1, y - 8, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
-      if (mx2 < x_trang - 14 || mx2 > x_trang + 10) display.drawBitmap(mx2, y + 4, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
+      if ((currentMillis / 700) % 2 == 0) {
+        display.drawPixel(8 + iconShiftX, y - 6, SSD1306_WHITE);  
+        display.drawPixel(24 + iconShiftX, y + 8, SSD1306_WHITE); 
+      }
+      display.drawBitmap(X_may1 + iconShiftX, y - 6, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
+      display.drawBitmap(X_may2 + iconShiftX, y + 2, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
     } else {
       display.drawBitmap(X_may1 + iconShiftX, y - 6, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
       display.drawBitmap(X_may2 + iconShiftX, y + 2, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
@@ -324,7 +320,7 @@ void loop() {
       }
     }
 
-    // --- TẦNG 2: CORE CLOCK & CHỮ CHẠY TĨNH FLASH ---
+    // --- TẦNG 2: CORE CLOCK & CHỮ CHẠY TĨNH IN HOA ---
     if (hasFirstSyncEver) {
       display.setTextSize(2); display.setCursor(4 + burnShiftX, 28 + burnShiftY); display.print(hStr); display.setCursor(4 + burnShiftX, 49 + burnShiftY); display.print(mStr);
       display.setTextSize(1); display.setCursor(4 + burnShiftX, 71 + burnShiftY); display.print(sStr); display.print(F("s")); 
