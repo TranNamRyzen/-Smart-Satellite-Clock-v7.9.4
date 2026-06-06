@@ -2,7 +2,6 @@
  * 🚀 SMART SATELLITE SYSTEM - v12.2 (BẢN SẠCH CHIA SẺ CỘNG ĐỒNG)
  * [PROJECT MANAGER]  : TRAN NAM
  * SOURCE CORE        : HuyVector & Gemini AI Collaborator
- * ĐỒ HỌA NÂNG CẤP     : Thanh Laser Để Yên | Mây Lướt Chậm Mượt | Chữ Chạy IN HOA Toàn Bộ
  * NOTE               : Đã xóa API Key và Địa điểm cá nhân để bảo mật khi chia sẻ.
  * =============================================================================================
  */
