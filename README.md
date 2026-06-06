@@ -1,423 +1,361 @@
-
- * SMART SATELLITE CLOCK v7.9.4 – OPEN-FRAME IoT SYSTEM (ESP32 / OLED / SHT31)
- * =============================================================================================
- *
- * 👤 QUẢN LÝ DỰ ÁN      : Trần Nam
- * 🔩 SOURCE CORE         : HuyVector (YouTube – nền tảng phần cứng & cảm hứng thiết kế)
- * 🤖 PHÁT TRIỂN MỞ RỘNG  : AI Collaborators (Gemini + ChatGPT – hỗ trợ tối ưu & hậu kiểm code)
- *
- * =============================================================================================
- * 🧠 TỔNG QUAN HỆ THỐNG
- * - Đồng hồ IoT khung thau hở mô phỏng vệ tinh mini
- * - ESP32C3 SUPER MINI + OLED SSD1306 (I2C)
- * - Cảm biến SHT31 đo nhiệt độ / độ ẩm
- * - Kiến trúc open-frame: ưu tiên cơ khí, tản nhiệt và dễ bảo trì
- *
- * =============================================================================================
- * ⚙️ 1. WIFI CORE (WiFiManager SYSTEM)
- * - Auto AP: "Smart_Satellite" khi mất kết nối
- * - Captive portal cấu hình bằng điện thoại
- * - Tự reconnect định kỳ
- * - Tự tắt WiFi sau khi sync để tiết kiệm năng lượng
- *
- * =============================================================================================
- * ⏰ 2. TIME CORE (NTP HYBRID SYSTEM)
- * - Đồng bộ thời gian qua NTP (pool.ntp.org)
- * - Duy trì thời gian offline bằng millis()
- * - Chu kỳ sync định kỳ để tránh lệch giờ
- *
- * =============================================================================================
- * 🧩 3. DISPLAY ENGINE (OLED UI SYSTEM)
- * - OLED SSD1306 xoay dọc 90°
- * - 3 trang hiển thị luân phiên 15 giây:
- *   + Page 1 (0–7s)  : Ngày / Tháng / Năm
- *   + Page 2 (7–11s) : Thứ (MON, TUE...)
- *   + Page 3 (11–15s): Tháng (JAN, FEB...)
- * - Line Flip 100ms khi chuyển trang (giả lập cơ khí)
- * - Anti burn-in: dịch UI ±1px theo chu kỳ
- *
- * =============================================================================================
- * 🌡 4. SENSOR CORE (SHT31 SYSTEM)
- * - Đọc nhiệt độ / độ ẩm mỗi 2 giây
- * - Lọc nhiễu bằng exponential smoothing
- * - Có cơ chế recover I2C khi bus treo
- * - Tự đánh dấu sensor online/offline
- *
- * =============================================================================================
- * 🌦 5. WEATHER ENGINE (PIXEL ART ICON SYSTEM)
- * - Rain  : humidity > 75% OR (humidity > 65% AND temp < 27°C)
- * - Cloud : 60% → 80%
- * - Sun   : < 60%
- *
- * - Hiển thị icon pixel art ở footer Page 3
- * - Khi lỗi sensor: hiển thị “?”
- *
- * =============================================================================================
- * 💡 6. LED PULSE ENGINE (DUAL PWM SYSTEM)
- * - LED nháy kép luân phiên 2 chân
- * - Chu kỳ cơ học: 4.5 giây
- * - Day mode   : 06:00 → 19:00 → brightness = 10
- * - Night mode : 19:00 → 06:00 → brightness = 5 (eco mode)
- *
- * =============================================================================================
- * 🔧 7. SYSTEM PRINCIPLE
- * - Ưu tiên ổn định hơn hiệu ứng
- * - Tự phục hồi khi lỗi WiFi / I2C
- * - Giữ kiến trúc open-frame hardware nguyên bản
- * - Mở rộng module nhưng không phá core logic
- *
+/* =============================================================================================
+ * 🚀 SMART SATELLITE SYSTEM - v12.2 (BẢN SẠCH CHIA SẺ CỘNG ĐỒNG)
+ * [PROJECT MANAGER]  : TRAN NAM
+ * SOURCE CORE        : HuyVector & Gemini AI Collaborator
+ * ĐỒ HỌA NÂNG CẤP     : Thanh Laser Để Yên | Mây Lướt Chậm Mượt | Chữ Chạy IN HOA Toàn Bộ
+ * NOTE               : Đã xóa API Key và Địa điểm cá nhân để bảo mật khi chia sẻ.
  * =============================================================================================
  */
 
-#include <Adafruit_GFX.h>       
-#include <Adafruit_SSD1306.h>   
-#include <Adafruit_SHT31.h>     
-#include <WebServer.h>          
-#include <DNSServer.h>          
-#include <WiFiManager.h>        
-#include <time.h>               
+#include <Wire.h>                 
+#include <Adafruit_GFX.h>         
+#include <Adafruit_SSD1306.h>     
+#include <Adafruit_SHT31.h>       
+#include <WebServer.h>            
+#include <DNSServer.h>            
+#include <WiFiManager.h>          
+#include <time.h>                 
+#include <HTTPClient.h>           
+#include <ArduinoJson.h>          
 
-// --- CẤU HÌNH PHẦN CỨNG MÀN HÌNH & CẢM BIẾN ---
-#define SCREEN_WIDTH 128        
-#define SCREEN_HEIGHT 32        
+#define SCREEN_WIDTH 128          
+#define SCREEN_HEIGHT 32          
+
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 Adafruit_SHT31 sht31 = Adafruit_SHT31();
 
-// --- KHAI BÁO BIẾN HỆ THỐNG CẢM BIẾN ---
-float filteredTemp = NAN, filteredHum = NAN;        
-const float alpha = 0.1;        
-unsigned long lastSensorRetry = 0, lastSensorRead = 0;   
-bool isSensorOnline = false;    
+// --- CẢM BIẾN SHT31 ---
+float filteredTemp = NAN, filteredHum = NAN; 
+float rawTemp = NAN, rawHum = NAN;           
+const float alpha = 0.1;                      
+unsigned long lastSensorRetry = 0, lastSensorRead = 0;
+bool isSensorOnline = false;                 
 
-// --- ĐỊNH NGHĨA CHÂN NGOẠI VI VÀ ĐỘ SÁNG LED ---
-#define I2C_SDA 8               
-#define I2C_SCL 9               
-#define LED_PIN_5 5             
-#define LED_PIN_4 4             
-#define LED_DAY_BRIGHTNESS   10  // Ban Ngày 6h-19h
-#define LED_NIGHT_BRIGHTNESS 5 // Ban Đêm 19h-6h hôm sau
-uint8_t ledBrightness = 10;      // Giữ nguyên độ sáng dịu hiu hiu dọc khung thau
+// --- HARDWARE LED ---
+#define LED_PIN_6 6               
+#define LED_PIN_5 5               
+#define LED_PIN_4 4               
+#define LED_DAY_BRIGHTNESS   10   
+#define LED_NIGHT_BRIGHTNESS 5    
+uint8_t ledBrightness = 10;       
 
-// --- BIẾN QUẢN LÝ ĐỒNG BỘ THỜI GIAN & WIFI ---
-unsigned long lastSyncWiFi = 0;            
-const unsigned long syncInterval = 3600000; // [ĐÃ ĐỔI] Đúng 1 TIẾNG đồng bộ lại 1 lần
+// --- KIỂM SOÁT WIFI ---
+bool laBanDem = false;            
+unsigned long lastSyncWiFi = 0;
+const unsigned long syncInterval = 1800000; 
 bool hasFirstSyncEver = false;             
-bool wifiConnectError = false;             
 bool reconnectingWiFi = false;             
-unsigned long reconnectStart = 0;          
+unsigned long reconnectStart = 0;
+bool portalStarted = false;                
 
 WiFiManager wm;
 
-// --- MẢNG LƯU CHUỖI KÝ TỰ TRÊN BỘ NHỚ FLASH (PROGMEM) ---
+// --- OPENWEATHERMAP (THAY ĐỔI THÔNG TIN TẠI ĐÂY KHI CẦN) ---
+String apiKey = ""; // Nhập OpenWeatherMap API Key của bạn vào đây
+String lat = "0.0000";   // Nhập Vĩ độ (Latitude) vùng của bạn
+String lon = "0.0000";  // Nhập Kinh độ (Longitude) vùng của bạn
+String serverPath = "http://api.openweathermap.org/data/2.5/weather?lat=" + lat + "&lon=" + lon + "&appid=" + apiKey + "&units=metric";
+String trangThaiThoiTiet = "NANG";         
+bool coDuLieuOnline = false;               
+int gioCapNhatAPI = 0, phutCapNhatAPI = 0;  
+int gioHienTaiHeThong = 12;                
+
+// --- TIMEOUT MẤT MẠNG (45 PHÚT) ---
+unsigned long thoiGianCapNhatMangCuoi = 0;  
+const unsigned long timeoutMatMang = 2700000; 
+
+// --- LOGIC CHỮ CUỘN TẦNG 2 ---
+int X_chuChay = 32;                       
+unsigned long lastScrollTime = 0;
+unsigned long waitStartTime = 0;
+bool dangChoNghi20s = false;               
+String chuoiChayTongHop = "";              
+String chuoiChayOwmDungSan = "TRST - SATELLITE STATION"; 
+
+// --- TỌA ĐỘ 2 ĐÁM MÂY BAY LƯỚT LỆCH PHA TẦNG 3 ---
+int X_may1 = -16; 
+int X_may2 = -36; 
+unsigned long lastScrollTimeMay = 0;
+
 const char* const daysOfWeekShort[] PROGMEM = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 const char* const monthsShort[] PROGMEM = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
 
-// --- BIẾN CHỐNG CHÁY HÌNH (ANTI-BURN-IN) & ĐỔI TRANG ---
+// --- ANTI-BURN-IN GLOBAL SHIFT ---
 static int8_t burnShiftX = 0, burnShiftY = 0; 
 static int8_t textShiftX = 0;                  
-static unsigned long lastShiftTime = 0;
-static int lastActivePage = 0;
+static int8_t iconShiftX = 0, iconShiftY = 0;  
+static unsigned long lastShiftTime = 0;        
 
-// --- ENGINE ĐỒ HỌA ICON PIXEL ART SẮC NÉT ---
-// Mặt trời
-void drawIconSunny(int x, int y) {
-  display.drawCircle(x + 8, y + 6, 4, SSD1306_WHITE);
+// --- BITMAPS CẢI TIẾN CHUẨN ĐỒ HỌA ---
+const uint8_t icon_Trang_Khuyet_Chuan[] PROGMEM = {
+  0x03, 0xe0, 0x0f, 0x80, 0x1e, 0x00, 0x3c, 0x00, 0x38, 0x00, 0x70, 0x00,
+  0x70, 0x00, 0x38, 0x00, 0x3c, 0x00, 0x1e, 0x00, 0x0f, 0x80, 0x03, 0xe0
+};
 
-  // Tia dọc
-  display.drawFastVLine(x + 8, y + 0, 2, SSD1306_WHITE);
-  display.drawFastVLine(x + 8, y + 10, 2, SSD1306_WHITE);
+const uint8_t icon_Set_Cai_Tien[] PROGMEM = {
+  0x0c, 0x18, 0x30, 0x60, 0xff, 0x38, 0x30, 0x60, 0xc0, 0x80, 0x00, 0x00
+};
 
-  // Tia ngang
-  display.drawFastHLine(x + 2, y + 6, 2, SSD1306_WHITE);
-  display.drawFastHLine(x + 12, y + 6, 2, SSD1306_WHITE);
+const uint8_t icon_May_Pixel_Theo_Anh[] PROGMEM = {
+  0x07, 0x00, 0x18, 0xe0, 0x23, 0x10, 0x44, 0x08, 0x88, 0x04, 0x90, 0x06,
+  0x80, 0x01, 0x40, 0x01, 0x22, 0x02, 0x1d, 0x1c, 0x00, 0xe0
+};
 
-  // Tia chéo
-  display.drawPixel(x + 4,  y + 2, SSD1306_WHITE);
-  display.drawPixel(x + 12, y + 2, SSD1306_WHITE);
-  display.drawPixel(x + 4,  y + 10, SSD1306_WHITE);
-  display.drawPixel(x + 12, y + 10, SSD1306_WHITE);
-}
- // Mây
-void drawIconCloudy(int x, int y) {
-  display.fillCircle(x + 15, y + 3, 3, SSD1306_WHITE);
-  display.fillCircle(x + 19, y + 4, 2, SSD1306_WHITE);
-  display.fillCircle(x + 11, y + 5, 2, SSD1306_WHITE);
-  display.fillRect(x + 11, y + 4, 9, 3, SSD1306_WHITE);
-  display.drawCircle(x + 5, y + 7, 3, SSD1306_WHITE);
-  display.drawCircle(x + 9, y + 6, 3, SSD1306_WHITE);
-  display.drawCircle(x + 12, y + 8, 2, SSD1306_WHITE);
-  display.drawCircle(x + 2, y + 8, 2, SSD1306_WHITE);
-  display.fillRect(x + 3, y + 7, 9, 3, SSD1306_BLACK);     
-  display.drawFastHLine(x + 2, y + 10, 11, SSD1306_WHITE);  
-}
-// Mưa
-void drawIconRainy(int x, int y) {
-  drawIconCloudy(x, y);
-
-  display.drawLine(x + 2,  y + 12, x + 1,  y + 15, SSD1306_WHITE);
-  display.drawLine(x + 6,  y + 12, x + 5,  y + 15, SSD1306_WHITE);
-  display.drawLine(x + 10, y + 12, x + 9,  y + 15, SSD1306_WHITE);
-  display.drawLine(x + 14, y + 12, x + 13, y + 15, SSD1306_WHITE);
-}
-
-void drawWeatherIconFooter(int x, int y, float temp, float humidity) {
-  if (isnan(humidity) || isnan(temp) || !isSensorOnline) { 
-    display.setTextSize(1); display.setCursor(x + 5, y + 4); display.print(F("?")); return;
-  }
-  if (humidity > 80.0 || (humidity > 75.0 && temp < 27.0)) drawIconRainy(x, y); 
-  else if (humidity >= 60.0 && humidity <= 80.0) drawIconCloudy(x, y);        
-  else drawIconSunny(x, y);                                                   
-}
-
-// --- HÀM CỨU HỘ KHÔI PHỤC BUS I2C ---
 void recoverI2CBus() {
   Wire.end(); delay(5);
-  pinMode(I2C_SCL, OUTPUT); pinMode(I2C_SDA, INPUT_PULLUP); delayMicroseconds(2);
-  for (int i = 0; i < 9; i++) { 
-    digitalWrite(I2C_SCL, HIGH); delayMicroseconds(5);
-    digitalWrite(I2C_SCL, LOW);  delayMicroseconds(5);
-  }
-  Wire.begin(I2C_SDA, I2C_SCL); Wire.setClock(400000); delay(5);
+  pinMode(8, OUTPUT); pinMode(9, INPUT_PULLUP); delayMicroseconds(2);
+  for (int i = 0; i < 9; i++) { digitalWrite(8, HIGH); delayMicroseconds(5); digitalWrite(8, LOW); delayMicroseconds(5); }
+  Wire.begin(8, 9); Wire.setClock(400000); delay(5);
 }
 
-// --- HÀM ĐỒNG BỘ GIỜ NTP TỐC ĐỘ CAO ---
+void layThoiTietVeTinhOnline() {
+  if (apiKey == "" || lat == "0.0000") return; // Chặn chạy ngầm nếu chưa cấu hình thông tin mạng
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http; http.begin(serverPath); http.setTimeout(3000); 
+    int httpResponseCode = http.GET();
+    if (httpResponseCode == 200) {
+      String payload = http.getString();
+      DynamicJsonDocument doc(1024); DeserializationError err = deserializeJson(doc, payload);
+      if (err) { coDuLieuOnline = false; http.end(); return; }
+      
+      int weatherId = doc["weather"][0]["id"];
+      if (weatherId >= 200 && weatherId <= 232) trangThaiThoiTiet = "DONG_SET";
+      else if (weatherId >= 300 && weatherId <= 531) trangThaiThoiTiet = "MUA";
+      else if (weatherId >= 801 && weatherId <= 804) trangThaiThoiTiet = "MAY";
+      else trangThaiThoiTiet = "NANG";
+
+      struct tm timeinfo;
+      if (getLocalTime(&timeinfo)) { 
+        gioCapNhatAPI = timeinfo.tm_hour; 
+        phutCapNhatAPI = timeinfo.tm_min; 
+        gioHienTaiHeThong = timeinfo.tm_hour; 
+      }
+      coDuLieuOnline = true; thoiGianCapNhatMangCuoi = millis();
+      
+      char formatCheck[32];
+      snprintf(formatCheck, sizeof(formatCheck), " (OWM SYNC AT: %02d:%02d)", gioCapNhatAPI, phutCapNhatAPI);
+      chuoiChayOwmDungSan = String(F("TRST - SATELLITE STATION")) + String(formatCheck);
+      
+    } else { coDuLieuOnline = false; }
+    http.end();
+  } else { coDuLieuOnline = false; }
+}
+
 void trySyncTime() {
   if (WiFi.status() == WL_CONNECTED) {
     configTime(7 * 3600, 0, "asia.pool.ntp.org", "time.google.com");
     struct tm timeinfo;
-    if (getLocalTime(&timeinfo, 1500)) { 
-      hasFirstSyncEver = true; 
-      wifiConnectError = false; 
-      lastSyncWiFi = millis();      
-      
-      WiFi.disconnect(false);
-      WiFi.mode(WIFI_OFF);
+    if (getLocalTime(&timeinfo, 1500)) {
+      hasFirstSyncEver = true; lastSyncWiFi = millis(); gioHienTaiHeThong = timeinfo.tm_hour;
+      layThoiTietVeTinhOnline(); portalStarted = false; 
+      WiFi.disconnect(false); WiFi.mode(WIFI_OFF); 
     }
   }
 }
 
-// =============================================================================================
-//                                  CẤU HÌNH PHẦN CỨNG BAN ĐẦU (SETUP)
-// =============================================================================================
+// --- HÀM VẼ 2 THANH NGANG ĐỂ YÊN KHÔNG HIỆU ỨNG (CHUẨN 32PX CHO MÀN HÌNH DỌC) ---
+void drawCyberLaserLines(int y1, int y2) {
+  display.drawFastHLine(0, y1, 32, SSD1306_WHITE);
+  display.drawFastHLine(0, y2, 32, SSD1306_WHITE);
+}
+
+// --- HÀM VẼ FOOTER TẦNG 3 CHU TRÌNH FADE MỜ DẦN VÀ RESET KHOẢNG TẮT ĐEN 0.2S ---
+void veChuyenTrangIconFooter(int x_icon_base, int y_icon, bool checkDem, unsigned long currentMillis) {
+  int x = x_icon_base + iconShiftX; 
+  int y = y_icon + iconShiftY;
+  unsigned long pulseModulo = currentMillis % 15000;
+
+  if (pulseModulo < 7000) {
+    if (pulseModulo > 6700) { if ((currentMillis % 2) == 0) return; }
+    if (isSensorOnline && !isnan(filteredTemp) && !isnan(filteredHum)) {
+      display.setCursor(1 + textShiftX, 102); 
+      display.print((int)filteredTemp); display.print((char)247); display.print(F("C")); 
+      display.setCursor(0 + textShiftX, 116); 
+      display.print(F("H:")); display.print((int)filteredHum); display.print(F("%")); 
+    } else {
+      display.setCursor(4 + textShiftX, 102); display.print(F("--")); display.print((char)247); display.print(F("C"));
+      display.setCursor(0 + textShiftX, 116); display.print(F("H:--%"));
+    }
+    return;
+  }
+
+  if (pulseModulo >= 14800) { display.fillRect(0, 96, 32, 32, SSD1306_BLACK); return; }
+  if (pulseModulo >= 7000 && pulseModulo < 7300) { if ((currentMillis % 3) == 0) return; }
+
+  if (trangThaiThoiTiet == "NANG") {
+    if (checkDem) {
+      int x_trang = 16 + iconShiftX; int y_trang = y - 6;
+      display.drawBitmap(x_trang, y_trang, icon_Trang_Khuyet_Chuan, 12, 12, SSD1306_WHITE); 
+      if ((currentMillis / 250) % 3 == 0) display.drawPixel(x_trang - 6, y_trang - 2, SSD1306_WHITE); 
+      if ((currentMillis / 350) % 3 == 1) display.drawPixel(x_trang + 18, y_trang + 4, SSD1306_WHITE);
+      if ((currentMillis / 450) % 3 == 2) display.drawPixel(x_trang + 4, y_trang + 15, SSD1306_WHITE);
+    } else {
+      display.fillCircle(x, y, 3, SSD1306_WHITE); 
+      int d = 5 + ((currentMillis / 200) % 2) * 2;
+      display.drawPixel(x, y - d, SSD1306_WHITE);   display.drawPixel(x, y + d, SSD1306_WHITE);
+      display.drawPixel(x - d, y, SSD1306_WHITE);   display.drawPixel(x + d, y, SSD1306_WHITE);
+      display.drawPixel(x - (d-1), y - (d-1), SSD1306_WHITE); display.drawPixel(x + (d-1), y - (d-1), SSD1306_WHITE);
+      display.drawPixel(x - (d-1), y + (d-1), SSD1306_WHITE); display.drawPixel(x + (d-1), y + (d-1), SSD1306_WHITE);
+    }
+  }
+  else if (trangThaiThoiTiet == "MAY") {
+    if (checkDem) {
+      int x_trang = 16 + iconShiftX; int y_trang = y - 6;
+      display.drawBitmap(x_trang, y_trang, icon_Trang_Khuyet_Chuan, 12, 12, SSD1306_WHITE);
+      
+      int mx1 = X_may1 + iconShiftX; int mx2 = X_may2 + iconShiftX;
+      if (mx1 < x_trang - 14 || mx1 > x_trang + 10) display.drawBitmap(mx1, y - 8, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
+      if (mx2 < x_trang - 14 || mx2 > x_trang + 10) display.drawBitmap(mx2, y + 4, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
+    } else {
+      display.drawBitmap(X_may1 + iconShiftX, y - 6, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
+      display.drawBitmap(X_may2 + iconShiftX, y + 2, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
+    }
+  }
+  else if (trangThaiThoiTiet == "MUA") {
+    display.drawBitmap(x - 8, y - 6, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
+    int quat_roi = (currentMillis / 80) % 6; 
+    display.drawPixel(x - 5, y + 6 + quat_roi, SSD1306_WHITE);
+    display.drawPixel(x - 1, y + 7 + (quat_roi % 4), SSD1306_WHITE);
+    display.drawPixel(x + 3, y + 5 + quat_roi, SSD1306_WHITE);
+  }
+  else if (trangThaiThoiTiet == "DONG_SET") {
+    display.drawBitmap(x - 8, y - 5, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
+    if ((currentMillis / 120) % 3 == 0) display.drawBitmap(x - 4, y + 6, icon_Set_Cai_Tien, 8, 12, SSD1306_WHITE); 
+  }
+}
+
 void setup() {
-  Serial.begin(115200); 
-  Wire.begin(I2C_SDA, I2C_SCL); Wire.setClock(400000); Wire.setTimeOut(50);                 
-  
-  randomSeed(analogRead(0)); 
+  Serial.begin(115200); Wire.begin(8, 9); Wire.setTimeout(50); randomSeed(esp_random());
+  ledcAttach(LED_PIN_5, 5000, 8); ledcAttach(LED_PIN_4, 5000, 8); ledcAttach(LED_PIN_6, 5000, 8);
+  ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, 0);  
 
-  // Cấu hình băm xung PWM phần cứng cho cặp LED tín hiệu
-  ledcAttach(LED_PIN_5, 5000, 8); 
-  ledcAttach(LED_PIN_4, 5000, 8); 
-  ledcWrite(LED_PIN_5, 0); 
-  ledcWrite(LED_PIN_4, 0); 
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { for (;;); }
+  display.clearDisplay(); display.setRotation(1); display.setTextColor(SSD1306_WHITE);
 
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { for (;;); } 
-  display.clearDisplay(); display.setRotation(1); display.setTextColor(SSD1306_WHITE); 
-
-  // Màn hình khởi động chỉn chu tinh gọn theo layout đứng
   display.setCursor(1, 10);  display.print(F("SMART"));
-  display.setCursor(1, 25);  display.print(F("SAT"));       
-  display.setCursor(1, 40);  display.print(F("SYS"));       
-  display.setCursor(1, 55);  display.print(F("v7.9.8"));    
+  display.setCursor(1, 25);  display.print(F("SAT"));      
+  display.setCursor(1, 40);  display.print(F("SYS"));      
+  display.setCursor(1, 55);  display.print(F("v12.2"));    
   display.drawFastHLine(0, 75, 32, SSD1306_WHITE);
   display.setCursor(1, 85);  display.print(F("READY"));     
-  display.display(); delay(1500); 
+  display.display(); delay(1500);
 
   if (sht31.begin(0x44)) isSensorOnline = true; else isSensorOnline = false;
-
-  wm.setConfigPortalBlocking(false); 
-  wm.setConfigPortalTimeout(60);     
-  wm.setConnectTimeout(150);         // [ĐÃ ĐỔI] Chốt hạ 150 giây cực kỳ chắc ăn cho bác Nam
-  
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(); 
-  lastSyncWiFi = millis();
+  wm.setConfigPortalBlocking(false); wm.setConfigPortalTimeout(60); wm.setConnectTimeout(150);
+  WiFi.mode(WIFI_STA); WiFi.begin(); lastSyncWiFi = millis();
 }
 
-// =============================================================================================
-//                                VÒNG LẶP HỆ THỐNG TUẦN HOÀN (LOOP)
-// =============================================================================================
 void loop() {
-  if (WiFi.getMode() != WIFI_OFF) {
-    wm.process(); 
+  if (WiFi.getMode() != WIFI_OFF) wm.process();
+  unsigned long now = millis();
+
+  if (now - lastScrollTimeMay >= 190) {
+    lastScrollTimeMay = now; 
+    X_may1++; if (X_may1 > 32) X_may1 = -16; 
+    X_may2++; if (X_may2 > 32) X_may2 = -16; 
   }
-  
-  unsigned long now = millis(); 
 
   if (!hasFirstSyncEver && (WiFi.status() != WL_CONNECTED) && (now > 5000) && (WiFi.getMode() != WIFI_OFF) && (!wm.getConfigPortalActive())) {
-    wm.startConfigPortal("Smart_Satellite");
+    if (!portalStarted) { wm.startConfigPortal("Smart_Satellite"); portalStarted = true; }
   }
-
-  if (!hasFirstSyncEver && (WiFi.status() == WL_CONNECTED)) {
-    trySyncTime();
-  }
-
-  if (hasFirstSyncEver && !reconnectingWiFi && (now - lastSyncWiFi > syncInterval)) {
-    reconnectingWiFi = true; 
-    reconnectStart = now; 
-    WiFi.mode(WIFI_STA); 
-    WiFi.begin();
-  }
+  if (!hasFirstSyncEver && (WiFi.status() == WL_CONNECTED)) trySyncTime();
+  if (hasFirstSyncEver && !reconnectingWiFi && (now - lastSyncWiFi > syncInterval)) { reconnectingWiFi = true; reconnectStart = now; WiFi.mode(WIFI_STA); WiFi.begin(); }
 
   if (reconnectingWiFi) {
-    if (now - reconnectStart > 12000) { 
-      reconnectingWiFi = false; 
-      lastSyncWiFi = now; 
-      WiFi.disconnect(false); 
-      WiFi.mode(WIFI_OFF); 
-    }
-    if (WiFi.status() == WL_CONNECTED) {
-      trySyncTime(); 
-      reconnectingWiFi = false;
-    }
+    if (now - reconnectStart > 12000) { reconnectingWiFi = false; lastSyncWiFi = now; WiFi.disconnect(false); WiFi.mode(WIFI_OFF); }
+    if (WiFi.status() == WL_CONNECTED) { trySyncTime(); reconnectingWiFi = false; }
   }
 
-  struct tm timeinfo;
-  char hStr[3] = "--", mStr[3] = "--", sStr[3] = "--";
-  char dayMonthStr[6] = "--/--", yearStr[5] = "----";
-  int currentHour = 0;
+  struct tm timeinfo; char hStr[3] = "--", mStr[3] = "--", sStr[3] = "--"; char dayMonthStr[6] = "--/--", yearStr[5] = "----";
+  if (hasFirstSyncEver && getLocalTime(&timeinfo)) { 
+    gioHienTaiHeThong = timeinfo.tm_hour;
+    snprintf(hStr, sizeof(hStr), "%02d", timeinfo.tm_hour); snprintf(mStr, sizeof(mStr), "%02d", timeinfo.tm_min); snprintf(sStr, sizeof(sStr), "%02d", timeinfo.tm_sec);
+    snprintf(dayMonthStr, sizeof(dayMonthStr), "%02d/%02d", timeinfo.tm_mday, timeinfo.tm_mon + 1); snprintf(yearStr, sizeof(yearStr), "%04d", timeinfo.tm_year + 1900);
+  }
+  
+  if (hasFirstSyncEver) {
+    if (gioHienTaiHeThong >= 6 && gioHienTaiHeThong < 19) { laBanDem = false; ledBrightness = LED_DAY_BRIGHTNESS; } 
+    else { laBanDem = true; ledBrightness = LED_NIGHT_BRIGHTNESS; }
+  }
 
-  if (hasFirstSyncEver && getLocalTime(&timeinfo, 10)) { 
-    currentHour = timeinfo.tm_hour;
-    snprintf(hStr, sizeof(hStr), "%02d", timeinfo.tm_hour);
-    snprintf(mStr, sizeof(mStr), "%02d", timeinfo.tm_min);
-    snprintf(sStr, sizeof(sStr), "%02d", timeinfo.tm_sec);
-    snprintf(dayMonthStr, sizeof(dayMonthStr), "%02d/%02d", timeinfo.tm_mday, timeinfo.tm_mon + 1); 
-    snprintf(yearStr, sizeof(yearStr), "%04d", timeinfo.tm_year + 1900);
-  }
-if (hasFirstSyncEver) {
-  if (currentHour >= 6 && currentHour < 19) {
-    ledBrightness = LED_DAY_BRIGHTNESS;
-  } else {
-    ledBrightness = LED_NIGHT_BRIGHTNESS;
-  }
-}
-  float rawTemp = NAN, rawHum  = NAN; bool sensorReadDone = false; 
+  bool sensorReadDone = false;
   if (now - lastSensorRead > 2000) {
-    rawTemp = sht31.readTemperature(); rawHum = sht31.readHumidity(); lastSensorRead = now; sensorReadDone = true; 
-    if (!isnan(rawTemp) && !isnan(rawHum)) {
+    rawTemp = sht31.readTemperature(); rawHum = sht31.readHumidity(); lastSensorRead = now; sensorReadDone = true;
+    if (!isnan(rawTemp) && !isnan(rawHum)) { 
       isSensorOnline = true;
-      if (isnan(filteredTemp)) filteredTemp = rawTemp; 
-      if (isnan(filteredHum))  filteredHum  = rawHum;  
-      filteredTemp = (filteredTemp * (1.0 - alpha)) + (rawTemp * alpha);
-      filteredHum  = (filteredHum * (1.0 - alpha)) + (rawHum * alpha);
+      if (isnan(filteredTemp)) filteredTemp = rawTemp; if (isnan(filteredHum)) filteredHum = rawHum;
+      filteredTemp = (filteredTemp * (1.0 - alpha)) + (rawTemp * alpha); filteredHum = (filteredHum * (1.0 - alpha)) + (rawHum * alpha);
     } else { isSensorOnline = false; }
   }
-  
-  if (sensorReadDone && !isSensorOnline) {
-    if (now - lastSensorRetry > 10000) { 
-      recoverI2CBus(); if (sht31.begin(0x44)) isSensorOnline = true; lastSensorRetry = now; 
-    }
+  if (sensorReadDone && !isSensorOnline && (now - lastSensorRetry > 10000)) { recoverI2CBus(); if (sht31.begin(0x44)) isSensorOnline = true; lastSensorRetry = now; }
+
+  bool dangChayCheDoOffline = (!hasFirstSyncEver || (now - thoiGianCapNhatMangCuoi > timeoutMatMang));
+  if (dangChayCheDoOffline) {
+    if (isSensorOnline && !isnan(rawTemp) && !isnan(rawHum)) {
+      if (rawHum > 85.0 || (rawHum > 80.0 && rawHum <= 85.0 && rawTemp < 26.0)) trangThaiThoiTiet = "MUA";
+      else if (rawHum >= 60.0 && rawHum <= 85.0) trangThaiThoiTiet = "MAY"; else trangThaiThoiTiet = "NANG";
+    } else { trangThaiThoiTiet = "NANG"; }
   }
 
-  unsigned long pulseModulo = now % 15000; 
-  int activePage = 0; 
-  if (pulseModulo < 7000) activePage = 0;                             
-  else if (pulseModulo >= 7000 && pulseModulo < 11000) activePage = 1; 
-  else activePage = 2;                                                
-
-  bool isPageFlipping = false; static unsigned long flipStartTime = 0;
-  
-  if (activePage != lastActivePage) { 
-    isPageFlipping = true; 
-    flipStartTime = now; 
-    lastActivePage = activePage; 
-  }
-  
-  if (now - flipStartTime < 100) isPageFlipping = true; 
-
-  bool blinkPhase = (now % 600) < 300; 
-  bool isWithinTenSec = (reconnectingWiFi && (now - reconnectStart <= 12000)); 
+  unsigned long pulseModulo = now % 15000; bool blinkPhase = (now % 600) < 300; bool isWithinTenSec = (reconnectingWiFi && (now - reconnectStart <= 12000));
 
   static unsigned long lastDisplayRender = 0;
   if (now - lastDisplayRender >= 33) {
-    lastDisplayRender = now; display.clearDisplay(); display.setTextSize(1); 
+    lastDisplayRender = now; display.clearDisplay(); display.setTextSize(1); display.setTextWrap(false); 
 
-    static bool oledDimmed = false;
-    bool shouldDim = hasFirstSyncEver && (currentHour >= 23 || currentHour <= 5);
+    static bool oledDimmed = false; bool shouldDim = hasFirstSyncEver && (gioHienTaiHeThong >= 23 || gioHienTaiHeThong <= 5);
     if (shouldDim != oledDimmed) { display.dim(shouldDim); oledDimmed = shouldDim; }
 
     if (now - lastShiftTime > 30000) { 
-      burnShiftX = random(-1, 2); burnShiftY = random(-1, 2); textShiftX = random(0, 2); lastShiftTime = now;
+      burnShiftX = random(-1, 2); burnShiftY = random(-1, 2); textShiftX = random(0, 2); 
+      iconShiftX = random(-1, 2); iconShiftY = random(-1, 2); lastShiftTime = now;
     }
 
-    if (wifiConnectError) {
-      display.setCursor(4 + textShiftX, 0); display.print(F("CONN")); display.setCursor(7 + textShiftX, 10); display.print(F("ERR"));
-    } 
-    else if (!hasFirstSyncEver || isWithinTenSec) {
+    drawCyberLaserLines(19, 95); 
+
+    // --- TẦNG 1: HEADER ---
+    if (!hasFirstSyncEver || isWithinTenSec) {
       if (blinkPhase) { display.setCursor(4 + textShiftX, 5); display.print(hasFirstSyncEver ? F("SYNC") : F("WAIT")); }
-    } 
-    else {
-      if (hasFirstSyncEver) {
-        if (activePage == 0) {
-          display.setCursor(1 + textShiftX, 0); display.print(dayMonthStr); display.setCursor(4 + textShiftX, 10); display.print(yearStr); 
-        } else if (activePage == 1) {
-          char bufferShortDay[4]; strcpy_P(bufferShortDay, (char*)pgm_read_ptr(&(daysOfWeekShort[timeinfo.tm_wday])));
-          display.setCursor(7 + textShiftX, 5); display.print(bufferShortDay); 
-        } else if (activePage == 2) {
-          char bufferShortMonth[4]; strcpy_P(bufferShortMonth, (char*)pgm_read_ptr(&(monthsShort[timeinfo.tm_mon])));
-          display.setCursor(7 + textShiftX, 5); display.print(bufferShortMonth);
-        }
-      }
-    }
-
-    if (!isPageFlipping) display.drawFastHLine(0, 19, 32, SSD1306_WHITE); 
-
-    if (hasFirstSyncEver) {
-      // [ĐÃ TINH CHỈNH] Hạ thấp tọa độ Y của khối Giờ, Phút, Giây để tạo khoảng thoáng so với gạch trên
-      display.setTextSize(2); 
-      display.setCursor(4 + burnShiftX, 28 + burnShiftY); display.print(hStr);
-      display.setCursor(4 + burnShiftX, 49 + burnShiftY); display.print(mStr);
-      display.setTextSize(1); 
-      display.setCursor(4 + burnShiftX, 71 + burnShiftY); display.print(sStr); display.print(F("s")); // Thêm chữ 's' tĩnh
     } else {
-      display.setTextSize(1); 
-      if (blinkPhase) { 
-        display.setCursor(4 + burnShiftX, 35 + burnShiftY); display.print(F("WAIT")); 
-        display.setCursor(1 + burnShiftX, 50 + burnShiftY); display.print(F("-ING")); 
-        display.setCursor(-2 + burnShiftX, 69 + burnShiftY); display.print(F("EARTH")); 
+      if (hasFirstSyncEver) {
+        if (pulseModulo < 6000) { display.setCursor(1 + textShiftX, 0); display.print(dayMonthStr); display.setCursor(4 + textShiftX, 10); display.print(yearStr); } 
+        else if (pulseModulo >= 6000 && pulseModulo < 11000) { char bufferShortDay[4]; strcpy_P(bufferShortDay, (char*)pgm_read_ptr(&(daysOfWeekShort[timeinfo.tm_wday]))); display.setCursor(7 + textShiftX, 5); display.print(bufferShortDay); } 
+        else if (pulseModulo >= 11000 && pulseModulo < 15000) { char bufferShortMonth[4]; strcpy_P(bufferShortMonth, (char*)pgm_read_ptr(&(monthsShort[timeinfo.tm_mon]))); display.setCursor(7 + textShiftX, 5); display.print(bufferShortMonth); }
       }
     }
 
-    if (!isPageFlipping) display.drawFastHLine(0, 95, 32, SSD1306_WHITE); 
+    // --- TẦNG 2: CORE CLOCK & CHỮ CHẠY TĨNH FLASH ---
+    if (hasFirstSyncEver) {
+      display.setTextSize(2); display.setCursor(4 + burnShiftX, 28 + burnShiftY); display.print(hStr); display.setCursor(4 + burnShiftX, 49 + burnShiftY); display.print(mStr);
+      display.setTextSize(1); display.setCursor(4 + burnShiftX, 71 + burnShiftY); display.print(sStr); display.print(F("s")); 
 
-    display.setTextSize(1);
-    if (activePage == 0 || activePage == 1) {
-      if (isSensorOnline && !isnan(filteredTemp) && !isnan(filteredHum)) {
-        display.setCursor(1 + textShiftX, 102); display.print((int)filteredTemp); display.print((char)247); display.print(F("C")); 
-        display.setCursor(0 + textShiftX, 116); display.print(F("H:")); display.print((int)filteredHum);  display.print(F("%")); 
-      } else {
-        display.setCursor(4 + textShiftX, 102); display.print(F("--")); display.print((char)247); display.print(F("C")); 
-        display.setCursor(0 + textShiftX, 116); display.print(F("H:--%")); 
-      }
-    } else if (activePage == 2) {
-      drawWeatherIconFooter(4 + textShiftX, 102, filteredTemp, filteredHum); 
+      if (dangChayCheDoOffline) { chuoiChayTongHop = F("SENSOR SHT3X"); } 
+      else { chuoiChayTongHop = chuoiChayOwmDungSan; } 
+
+      int doRongChuoi = chuoiChayTongHop.length() * 6;
+      if (dangChoNghi20s) { if (now - waitStartTime >= 20000) { dangChoNghi20s = false; X_chuChay = 32; } } 
+      else { if (now - lastScrollTime >= 80) { lastScrollTime = now; X_chuChay--; if (X_chuChay <= -doRongChuoi) { dangChoNghi20s = true; waitStartTime = now; } } }
+      if (!dangChoNghi20s) { display.setCursor(X_chuChay + burnShiftX, 85 + burnShiftY); display.print(chuoiChayTongHop); }
+    } else {
+      display.setTextSize(1);
+      if (blinkPhase) { display.setCursor(4 + burnShiftX, 35 + burnShiftY); display.print(F("WAIT")); display.setCursor(1 + burnShiftX, 50 + burnShiftY); display.print(F("-ING")); display.setCursor(-2 + burnShiftX, 69 + burnShiftY); display.print(F("EARTH")); }
     }
 
-    display.display(); 
+    // --- TẦNG 3: METEO FOOTER ---
+    veChuyenTrangIconFooter(16, 108, laBanDem, now);
+
+    display.display();
   }
 
-  // Cụm điều khiển nhấp nháy đuổi kép LED cơ học
-  unsigned long ledCycle = now % 4500; 
- if (ledCycle < 45) {
-  ledcWrite(LED_PIN_5, ledBrightness);
-  ledcWrite(LED_PIN_4, 0);
-}
-else if (ledCycle >= 100 && ledCycle < 145) {
-  ledcWrite(LED_PIN_5, ledBrightness);
-  ledcWrite(LED_PIN_4, 0);
-}
-else if (ledCycle >= 265 && ledCycle < 310) {
-  ledcWrite(LED_PIN_5, 0);
-  ledcWrite(LED_PIN_4, ledBrightness);
-}
-else if (ledCycle >= 365 && ledCycle < 410) {
-  ledcWrite(LED_PIN_5, 0);
-  ledcWrite(LED_PIN_4, ledBrightness);
-}
-else {
-  ledcWrite(LED_PIN_5, 0);
-  ledcWrite(LED_PIN_4, 0);
-}
-  delay(10); // Nhịp thở FreeRTOS nuôi luồng WiFi ngầm ổn định
+  // --- LED HARDWARE PROCESS ---
+  unsigned long ledCycle = now % 6000;
+  if (ledCycle < 50) { ledcWrite(LED_PIN_5, ledBrightness); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, 0); } 
+  else if (ledCycle >= 120 && ledCycle < 170) { ledcWrite(LED_PIN_5, ledBrightness); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, 0); } 
+  else if (ledCycle >= 300 && ledCycle < 350) { ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, ledBrightness); ledcWrite(LED_PIN_6, 0); } 
+  else if (ledCycle >= 420 && ledCycle < 470) { ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, ledBrightness); ledcWrite(LED_PIN_6, 0); } 
+  else if (ledCycle >= 600 && ledCycle < 650) { ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, ledBrightness); } 
+  else if (ledCycle >= 720 && ledCycle < 770) { ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, ledBrightness); } 
+  else { ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, 0); }
+  delay(10);
 }
