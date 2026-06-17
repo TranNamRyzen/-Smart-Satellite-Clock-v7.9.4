@@ -1,9 +1,7 @@
 /* =============================================================================================
- * 🚀 SMART SATELLITE SYSTEM - v12.5 (RANDOM NIGHT SKY EDITION)
- * ESP32C3 SUPER MINI + OLED 128x32 Pixel + SENSOR SHT3X
+ * 🚀 SMART SATELLITE SYSTEM - v15 (OPEN-METEO HOURLY FORECAST EDITION)
  * [PROJECT MANAGER]  : TRAN NAM
  * SOURCE DESIGN      : HuyVector & Gemini AI Collaborator
- * ĐỒ HỌA NÂNG CẤP     : Sao đêm nhảy vị trí NGẪU NHIÊN (Random) khi có mây trôi | Mượt mà 100%
  * =============================================================================================
  */
 
@@ -42,7 +40,7 @@ uint8_t ledBrightness = 10;
 // --- KIỂM SOÁT WIFI ---
 bool laBanDem = false;            
 unsigned long lastSyncWiFi = 0;
-const unsigned long syncInterval = 1800000; 
+const unsigned long syncInterval = 900000; 
 bool hasFirstSyncEver = false;             
 bool reconnectingWiFi = false;             
 unsigned long reconnectStart = 0;
@@ -50,12 +48,13 @@ bool portalStarted = false;
 
 WiFiManager wm;
 
-// --- OPENWEATHERMAP ---
-String apiKey = "faeeb2ffc93fba572b6717dcc030ec59";
+// --- OPEN-METEO CONFIG (CAO LANH, DONG THAP) ---
 String lat = "10.4851";
 String lon = "105.6176";
-String serverPath = "http://api.openweathermap.org/data/2.5/weather?lat=" + lat + "&lon=" + lon + "&appid=" + apiKey + "&units=metric";
+
+// --- QUẢN LÝ BIẾN TOÀN CỤC THỜI TIẾT v15 ---
 String trangThaiThoiTiet = "NANG";         
+String duBao1HToi = "";                    // CHƯA CÓ MẠNG THÌ ĐỂ TRỐNG TRƠN
 bool coDuLieuOnline = false;               
 int gioCapNhatAPI = 0, phutCapNhatAPI = 0;  
 int gioHienTaiHeThong = 12;                
@@ -70,11 +69,11 @@ unsigned long lastScrollTime = 0;
 unsigned long waitStartTime = 0;
 bool dangChoNghi20s = false;               
 String chuoiChayTongHop = "";              
-String chuoiChayOwmDungSan = "P.MY NGAI-P.CAO LANH, DONG THAP"; 
+String chuoiChayOwmDungSan = "";           // CHƯA CÓ MẠNG THÌ KHÔNG GHI GÌ CẢ ANH NAM NHÉ!
 
 // --- TỌA ĐỘ 2 ĐÁM MÂY BAY LƯỚT LỆCH PHA TẦNG 3 ---
 int X_may1 = -16; 
-int X_may2 = -36; 
+int X_may2 = 8; 
 unsigned long lastScrollTimeMay = 0;
 
 const char* const daysOfWeekShort[] PROGMEM = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
@@ -88,14 +87,14 @@ static unsigned long lastShiftTime = 0;
 
 // --- BIẾN LƯU TỌA ĐỘ RANDOM CHO SAO ĐÊM ---
 static int starRandX1 = 6;
-static int starRandY1 = 100;
+static int starRandY1 = 98;
 static int starRandX2 = 22;
-static int starRandY2 = 115;
+static int starRandY2 = 100;
 static unsigned long lastStarRandomTime = 0;
 
-// --- BITMAPS CẢI TIẾN CHUẨN ĐỒ HỌA MỚI ---
+// --- BITMAPS ĐÃ ĐƯỢC CHECK CHUẨN MA TRẬN PIXEL ---
 const uint8_t icon_Trang_Khuyet_Nho[] PROGMEM = {
-  0x03, 0x80, 0x07, 0x00, 0x0e, 0x00, 0x0c, 0x00, 0x0c, 0x00, 0x0e, 0x00, 0x07, 0x00, 0x03, 0x80
+  0x3c, 0x70, 0xe0, 0xc0, 0xc0, 0xe0, 0x70, 0x3c
 };
 
 const uint8_t icon_Set_Cai_Tien[] PROGMEM = {
@@ -116,34 +115,107 @@ void recoverI2CBus() {
 
 void layThoiTietVeTinhOnline() {
   if (WiFi.status() == WL_CONNECTED) {
-    HTTPClient http; http.begin(serverPath); http.setTimeout(3000); 
+    HTTPClient http;
+    String urlv15 = "http://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lon + 
+                    "&current=temperature_2m,relative_humidity_2m,weather_code" +
+                    "&hourly=weather_code&timezone=Asia%2FBangkok&forecast_days=1";
+                    
+    http.begin(urlv15);
+    http.setTimeout(4000);
+
     int httpResponseCode = http.GET();
+
     if (httpResponseCode == 200) {
       String payload = http.getString();
-      DynamicJsonDocument doc(1024); DeserializationError err = deserializeJson(doc, payload);
-      if (err) { coDuLieuOnline = false; http.end(); return; }
-      
-      int weatherId = doc["weather"][0]["id"];
-      if (weatherId >= 200 && weatherId <= 232) trangThaiThoiTiet = "DONG_SET";
-      else if (weatherId >= 300 && weatherId <= 531) trangThaiThoiTiet = "MUA";
-      else if (weatherId >= 801 && weatherId <= 804) trangThaiThoiTiet = "MAY";
-      else trangThaiThoiTiet = "NANG";
+      DynamicJsonDocument doc(2048); 
+      DeserializationError err = deserializeJson(doc, payload);
 
-      struct tm timeinfo;
-      if (getLocalTime(&timeinfo)) { 
-        gioCapNhatAPI = timeinfo.tm_hour; 
-        phutCapNhatAPI = timeinfo.tm_min; 
-        gioHienTaiHeThong = timeinfo.tm_hour; 
+      if (err) {
+        coDuLieuOnline = false;
+        http.end();
+        return;
       }
-      coDuLieuOnline = true; thoiGianCapNhatMangCuoi = millis();
+
+      // 1️⃣ BÓC TÁCH THỜI TIẾT HIỆN TẠI (CURRENT)
+      JsonObject current = doc["current"];
+      int webTemp = (int)current["temperature_2m"];
+      int webHum = (int)current["relative_humidity_2m"];
+      int weatherCode = current["weather_code"]; 
+
+      String textTrangThai = "TROI QUANG";
+      if (weatherCode == 0) {
+        trangThaiThoiTiet = "NANG";
+        textTrangThai = "TROI QUANG";
+      } 
+      else if (weatherCode >= 1 && weatherCode <= 3) {
+        trangThaiThoiTiet = "MAY";
+        textTrangThai = (weatherCode == 1) ? "IT MAY" : "NHIEU MAY";
+      } 
+      else if ((weatherCode >= 51 && weatherCode <= 67) || (weatherCode >= 80 && weatherCode <= 82)) {
+        trangThaiThoiTiet = "MUA";
+        textTrangThai = "CO MUA GIONG";
+      } 
+      else if (weatherCode >= 95 && weatherCode <= 99) {
+        trangThaiThoiTiet = "DONG_SET";
+        textTrangThai = "GIONG SET CHOP";
+      } 
+      else {
+        trangThaiThoiTiet = "NANG"; 
+        textTrangThai = "THOI TIET TOT";
+      }
+
+      // 2️⃣ ĐỒNG BỘ GIỜ ĐỂ TÍNH TIẾNG TIẾP THEO
+      struct tm timeinfo;
+      int gioHienTai = 12;
+      if (getLocalTime(&timeinfo)) {
+        gioCapNhatAPI = timeinfo.tm_hour;
+        phutCapNhatAPI = timeinfo.tm_min;
+        gioHienTaiHeThong = timeinfo.tm_hour;
+        gioHienTai = timeinfo.tm_hour;
+      }
+
+      // 3️⃣ BÓC TÁCH MẢNG DỰ BÁO TƯƠNG LAI (HOURLY)
+      int gioDuBao = (gioHienTai + 1) % 24; 
+      int hourlyWeatherCode = weatherCode;  
       
-      char formatCheck[32];
-      snprintf(formatCheck, sizeof(formatCheck), " (OWM SYNC AT: %02d:%02d)", gioCapNhatAPI, phutCapNhatAPI);
-      chuoiChayOwmDungSan = String(F("P.MY NGAI-P.CAO LANH, DONG THAP")) + String(formatCheck);
-      
-    } else { coDuLieuOnline = false; }
+      if (doc.containsKey("hourly") && doc["hourly"].containsKey("weather_code")) {
+        JsonArray hourlyCodes = doc["hourly"]["weather_code"];
+        if (gioDuBao < hourlyCodes.size()) {
+          hourlyWeatherCode = hourlyCodes[gioDuBao];
+        }
+      }
+
+      if (hourlyWeatherCode == 0) { duBao1HToi = "TROI QUANG"; }
+      else if (hourlyWeatherCode >= 1 && hourlyWeatherCode <= 3) { duBao1HToi = (hourlyWeatherCode == 1) ? "IT MAY" : "NHIEU MAY"; }
+      else if ((hourlyWeatherCode >= 51 && hourlyWeatherCode <= 67) || (hourlyWeatherCode >= 80 && hourlyWeatherCode <= 82)) { duBao1HToi = "CO MUA GIONG"; }
+      else if (hourlyWeatherCode >= 95 && hourlyWeatherCode <= 99) { duBao1HToi = "GIONG SET CHOP"; }
+      else { duBao1HToi = "THOI TIET TOT"; }
+
+      coDuLieuOnline = true;
+      thoiGianCapNhatMangCuoi = millis();
+
+      // 4️⃣ GHÉP CHUỖI THÀNH PHẨM KHI ĐÃ CÓ MẠNG NGON LÀNH
+      char formatCheck[256];
+      snprintf(
+        formatCheck,
+        sizeof(formatCheck),
+        " - %s - T:%doC H:%d%% - DU BAO %02dH: %s (SYNC: %02d:%02d)", 
+        textTrangThai.c_str(),
+        webTemp,
+        webHum,
+        gioDuBao,
+        duBao1HToi.c_str(), 
+        gioCapNhatAPI,
+        phutCapNhatAPI
+      );
+
+      chuoiChayOwmDungSan = String(F("P.MY NGAI - P.CAO LANH, DONG THAP")) + String(formatCheck);
+
+    } else {
+      coDuLieuOnline = false;
+    }
     http.end();
-  } else { coDuLieuOnline = false; }
+  }
 }
 
 void trySyncTime() {
@@ -153,7 +225,7 @@ void trySyncTime() {
     if (getLocalTime(&timeinfo, 1500)) {
       hasFirstSyncEver = true; lastSyncWiFi = millis(); gioHienTaiHeThong = timeinfo.tm_hour;
       layThoiTietVeTinhOnline(); portalStarted = false; 
-      WiFi.disconnect(false); WiFi.mode(WIFI_OFF); 
+      WiFi.disconnect(true); 
     }
   }
 }
@@ -163,13 +235,26 @@ void drawCyberLaserLines(int y1, int y2) {
   display.drawFastHLine(0, y2, 32, SSD1306_WHITE);
 }
 
-// --- HÀM VẼ ICON TẦNG 3 (ĐÃ CẬP NHẬT RANDOM SAO ĐÊM) ---
 void veChuyenTrangIconFooter(int x_icon_base, int y_icon, bool checkDem, unsigned long currentMillis) {
   int x = x_icon_base + iconShiftX; 
   int y = y_icon + iconShiftY;
   unsigned long pulseModulo = currentMillis % 15000;
 
-  // 7 giây đầu hiển thị cảm biến Nhiệt độ / Độ ẩm bình thường
+  // 1️⃣ MẤT MẠNG: Chỉ hiện SHT3x tại chỗ
+  if (!coDuLieuOnline) {
+    if (isSensorOnline && !isnan(filteredTemp) && !isnan(filteredHum)) {
+      display.setCursor(1 + textShiftX, 102); 
+      display.print((int)filteredTemp); display.print((char)247); display.print(F("C")); 
+      display.setCursor(0 + textShiftX, 116); 
+      display.print(F("H:")); display.print((int)filteredHum); display.print(F("%")); 
+    } else {
+      display.setCursor(4 + textShiftX, 102); display.print(F("--")); display.print((char)247); display.print(F("C"));
+      display.setCursor(0 + textShiftX, 116); display.print(F("H:--%"));
+    }
+    return; 
+  }
+
+  // 2️⃣ CÓ MẠNG: Hiện số đo SHT31
   if (pulseModulo < 7000) {
     if (isSensorOnline && !isnan(filteredTemp) && !isnan(filteredHum)) {
       display.setCursor(1 + textShiftX, 102); 
@@ -183,60 +268,51 @@ void veChuyenTrangIconFooter(int x_icon_base, int y_icon, bool checkDem, unsigne
     return;
   }
 
-  // --- TRẠNG THÁI NĂNG (ĐÊM: TRĂNG NHỎ + SAO NHÁY CHỚP) ---
+  // 3️⃣ CÓ MẠNG: Vẽ các Icon
   if (trangThaiThoiTiet == "NANG") {
     if (checkDem) {
-      int x_trang = 12 + iconShiftX; int y_trang = y - 4; // Căn giữa chuẩn
+      int x_trang = x - 4; int y_trang = y - 4; 
       display.drawBitmap(x_trang, y_trang, icon_Trang_Khuyet_Nho, 8, 8, SSD1306_WHITE); 
       if ((currentMillis / 500) % 2 == 0) {
-        display.drawPixel(x_trang - 4, y_trang - 2, SSD1306_WHITE); 
-        display.drawPixel(x_trang + 10, y_trang + 6, SSD1306_WHITE); 
-        display.drawPixel(x_trang + 3, y_trang + 9, SSD1306_WHITE); 
+        display.drawPixel(x_trang - 3, y_trang - 2, SSD1306_WHITE); 
+        display.drawPixel(x_trang + 11, y_trang + 4, SSD1306_WHITE); 
       }
     } else {
       display.fillCircle(x, y, 3, SSD1306_WHITE); 
-      int d = 5 + ((currentMillis / 200) % 2) * 2;
+      int d = 5 + ((currentMillis / 250) % 2) * 2;
       display.drawPixel(x, y - d, SSD1306_WHITE);   display.drawPixel(x, y + d, SSD1306_WHITE);
       display.drawPixel(x - d, y, SSD1306_WHITE);   display.drawPixel(x + d, y, SSD1306_WHITE);
-      display.drawPixel(x - (d-1), y - (d-1), SSD1306_WHITE); display.drawPixel(x + (d-1), y - (d-1), SSD1306_WHITE);
-      display.drawPixel(x - (d-1), y + (d-1), SSD1306_WHITE); display.drawPixel(x + (d-1), y + (d-1), SSD1306_WHITE);
     }
   }
-  // --- TRẠNG THÁI MÂY (ĐÊM: BỎ TRĂNG - MÂY TRÔI ĐÈ SAO RANDOM) ---
   else if (trangThaiThoiTiet == "MAY") {
     if (checkDem) {
-      // Cứ sau mỗi 1.4 giây (sau khi sao tắt và bật lại), đổi vị trí ngẫu nhiên cho sinh động
-      if (currentMillis - lastStarRandomTime >= 1400) {
+      if (currentMillis - lastStarRandomTime >= 1200) {
         lastStarRandomTime = currentMillis;
-        starRandX1 = random(2, 14);  // Random trong khu vực nửa trái vùng quét dọc
-        starRandY1 = random(98, 108);
-        starRandX2 = random(18, 30); // Random trong khu vực nửa phải vùng quét dọc
-        starRandY2 = random(110, 122);
+        starRandX1 = random(2, 13);  starRandY1 = random(96, 101); 
+        starRandX2 = random(18, 30); starRandY2 = random(97, 102);
       }
-
-      // Nhịp hiển thị nhấp nháy cho sao
-      if ((currentMillis / 700) % 2 == 0) {
-        display.drawPixel(starRandX1 + iconShiftX, starRandY1 + iconShiftY, SSD1306_WHITE);  
-        display.drawPixel(starRandX2 + iconShiftX, starRandY2 + iconShiftY, SSD1306_WHITE); 
+      if ((currentMillis / 400) % 2 == 0) {
+        display.drawPixel(starRandX1, starRandY1, SSD1306_WHITE);  
+        display.drawPixel(starRandX2, starRandY2, SSD1306_WHITE); 
       }
-      // Vẽ mây đè lên sao
-      display.drawBitmap(X_may1 + iconShiftX, y - 6, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
-      display.drawBitmap(X_may2 + iconShiftX, y + 2, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
-    } else {
-      display.drawBitmap(X_may1 + iconShiftX, y - 6, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
-      display.drawBitmap(X_may2 + iconShiftX, y + 2, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
+      display.drawPixel(3, 115, SSD1306_WHITE);
+      display.drawPixel(29, 100, SSD1306_WHITE);
     }
+    display.drawBitmap(X_may1, y - 6, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
+    display.drawBitmap(X_may2, y + 2, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
   }
   else if (trangThaiThoiTiet == "MUA") {
-    display.drawBitmap(x - 8, y - 6, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
-    int quat_roi = (currentMillis / 80) % 6; 
-    display.drawPixel(x - 5, y + 6 + quat_roi, SSD1306_WHITE);
-    display.drawPixel(x - 1, y + 7 + (quat_roi % 4), SSD1306_WHITE);
-    display.drawPixel(x + 3, y + 5 + quat_roi, SSD1306_WHITE);
+    int x_may = x - 8;
+    display.drawBitmap(x_may, y - 6, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
+    int quat_roi = (currentMillis / 70) % 6; 
+    display.drawPixel(x_may + 3, y + 6 + quat_roi, SSD1306_WHITE);
+    display.drawPixel(x_may + 8, y + 5 + ((quat_roi + 2) % 6), SSD1306_WHITE);
+    display.drawPixel(x_may + 13, y + 7 + ((quat_roi + 4) % 6), SSD1306_WHITE);
   }
   else if (trangThaiThoiTiet == "DONG_SET") {
-    display.drawBitmap(x - 8, y - 5, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
-    if ((currentMillis / 120) % 3 == 0) display.drawBitmap(x - 4, y + 6, icon_Set_Cai_Tien, 8, 12, SSD1306_WHITE); 
+    int x_may = x - 8;
+    display.drawBitmap(x_may, y - 5, icon_May_Pixel_Theo_Anh, 16, 11, SSD1306_WHITE);
+    if ((currentMillis / 100) % 3 == 0) display.drawBitmap(x - 4, y + 6, icon_Set_Cai_Tien, 8, 12, SSD1306_WHITE); 
   }
 }
 
@@ -246,23 +322,38 @@ void setup() {
   ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, 0);  
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { for (;;); }
-  display.clearDisplay(); display.setRotation(1); display.setTextColor(SSD1306_WHITE);
+  display.clearDisplay(); 
+  display.setRotation(1); 
+  display.setTextColor(SSD1306_WHITE);
 
   display.setCursor(1, 10);  display.print(F("SMART"));
   display.setCursor(1, 25);  display.print(F("SAT"));      
   display.setCursor(1, 40);  display.print(F("SYS"));      
-  display.setCursor(1, 55);  display.print(F("v12.2"));    
+  display.setCursor(1, 55);  display.print(F("v15."));    
   display.drawFastHLine(0, 75, 32, SSD1306_WHITE);
   display.setCursor(1, 85);  display.print(F("READY"));     
-  display.display(); delay(1500);
+  display.display(); delay(2500);
 
   if (sht31.begin(0x44)) isSensorOnline = true; else isSensorOnline = false;
-  wm.setConfigPortalBlocking(false); wm.setConfigPortalTimeout(60); wm.setConnectTimeout(150);
-  WiFi.mode(WIFI_STA); WiFi.begin(); lastSyncWiFi = millis();
+
+  wm.setConfigPortalBlocking(true); 
+  wm.setConfigPortalTimeout(120);   
+  wm.setConnectTimeout(30); 
+  
+  WiFi.mode(WIFI_STA);
+  
+  if (!wm.autoConnect("Smart_Satellite_v15")) {
+    Serial.println(F("Hết hạn cấu hình, đang khởi động lại..."));
+    ESP.restart();
+  }
+  
+  wm.setConfigPortalBlocking(false); 
+  lastSyncWiFi = millis();
+  trySyncTime(); 
 }
 
 void loop() {
-  if (WiFi.getMode() != WIFI_OFF) wm.process();
+  if (WiFi.status() == WL_CONNECTED) wm.process();
   unsigned long now = millis();
 
   if (now - lastScrollTimeMay >= 190) {
@@ -271,15 +362,22 @@ void loop() {
     X_may2++; if (X_may2 > 32) X_may2 = -16; 
   }
 
-  if (!hasFirstSyncEver && (WiFi.status() != WL_CONNECTED) && (now > 5000) && (WiFi.getMode() != WIFI_OFF) && (!wm.getConfigPortalActive())) {
-    if (!portalStarted) { wm.startConfigPortal("Smart_Satellite"); portalStarted = true; }
+  if (hasFirstSyncEver && !reconnectingWiFi && (now - lastSyncWiFi > syncInterval)) { 
+    reconnectingWiFi = true; 
+    reconnectStart = now; 
+    wm.autoConnect("Smart_Satellite_v15"); 
   }
-  if (!hasFirstSyncEver && (WiFi.status() == WL_CONNECTED)) trySyncTime();
-  if (hasFirstSyncEver && !reconnectingWiFi && (now - lastSyncWiFi > syncInterval)) { reconnectingWiFi = true; reconnectStart = now; WiFi.mode(WIFI_STA); WiFi.begin(); }
 
   if (reconnectingWiFi) {
-    if (now - reconnectStart > 12000) { reconnectingWiFi = false; lastSyncWiFi = now; WiFi.disconnect(false); WiFi.mode(WIFI_OFF); }
-    if (WiFi.status() == WL_CONNECTED) { trySyncTime(); reconnectingWiFi = false; }
+    if (now - reconnectStart > 15000) { 
+      reconnectingWiFi = false; 
+      lastSyncWiFi = now; 
+      WiFi.disconnect(true); 
+    }
+    if (WiFi.status() == WL_CONNECTED) { 
+      trySyncTime(); 
+      reconnectingWiFi = false; 
+    }
   }
 
   struct tm timeinfo; char hStr[3] = "--", mStr[3] = "--", sStr[3] = "--"; char dayMonthStr[6] = "--/--", yearStr[5] = "----";
@@ -304,14 +402,12 @@ void loop() {
     } else { isSensorOnline = false; }
   }
   if (sensorReadDone && !isSensorOnline && (now - lastSensorRetry > 10000)) { recoverI2CBus(); if (sht31.begin(0x44)) isSensorOnline = true; lastSensorRetry = now; }
-
-  bool dangChayCheDoOffline = (!hasFirstSyncEver || (now - thoiGianCapNhatMangCuoi > timeoutMatMang));
-  if (dangChayCheDoOffline) {
-    if (isSensorOnline && !isnan(rawTemp) && !isnan(rawHum)) {
-      if (rawHum > 85.0 || (rawHum > 80.0 && rawHum <= 85.0 && rawTemp < 26.0)) trangThaiThoiTiet = "MUA";
-      else if (rawHum >= 60.0 && rawHum <= 85.0) trangThaiThoiTiet = "MAY"; else trangThaiThoiTiet = "NANG";
-    } else { trangThaiThoiTiet = "NANG"; }
+  
+  if (hasFirstSyncEver && (now - thoiGianCapNhatMangCuoi > timeoutMatMang)) {
+    coDuLieuOnline = false; 
   }
+
+  bool dangChayCheDoOffline = hasFirstSyncEver && (now - thoiGianCapNhatMangCuoi > timeoutMatMang) && !coDuLieuOnline;
 
   unsigned long pulseModulo = now % 15000; bool blinkPhase = (now % 600) < 300; bool isWithinTenSec = (reconnectingWiFi && (now - reconnectStart <= 12000));
 
@@ -340,7 +436,7 @@ void loop() {
       }
     }
 
-    // --- TẦNG 2: CORE CLOCK & CHỮ CHẠY TĨNH IN HOA ---
+    // --- TẦNG 2: CORE CLOCK & CHỮ CHẠY ---
     if (hasFirstSyncEver) {
       display.setTextSize(2); display.setCursor(4 + burnShiftX, 28 + burnShiftY); display.print(hStr); display.setCursor(4 + burnShiftX, 49 + burnShiftY); display.print(mStr);
       display.setTextSize(1); display.setCursor(4 + burnShiftX, 71 + burnShiftY); display.print(sStr); display.print(F("s")); 
@@ -348,10 +444,13 @@ void loop() {
       if (dangChayCheDoOffline) { chuoiChayTongHop = F("SENSOR SHT3X"); } 
       else { chuoiChayTongHop = chuoiChayOwmDungSan; } 
 
-      int doRongChuoi = chuoiChayTongHop.length() * 6;
-      if (dangChoNghi20s) { if (now - waitStartTime >= 20000) { dangChoNghi20s = false; X_chuChay = 32; } } 
-      else { if (now - lastScrollTime >= 80) { lastScrollTime = now; X_chuChay--; if (X_chuChay <= -doRongChuoi) { dangChoNghi20s = true; waitStartTime = now; } } }
-      if (!dangChoNghi20s) { display.setCursor(X_chuChay + burnShiftX, 85 + burnShiftY); display.print(chuoiChayTongHop); }
+      // KIỂM TRA NẾU CHUỖI CÒN RỖNG THÌ KHÔNG IN GÌ RA MÀN HÌNH TẦNG 2 HẾT
+      if (chuoiChayTongHop.length() > 0) {
+        int doRongChuoi = chuoiChayTongHop.length() * 6;
+        if (dangChoNghi20s) { if (now - waitStartTime >= 20000) { dangChoNghi20s = false; X_chuChay = 32; } } 
+        else { if (now - lastScrollTime >= 80) { lastScrollTime = now; X_chuChay--; if (X_chuChay <= -doRongChuoi) { dangChoNghi20s = true; waitStartTime = now; } } }
+        if (!dangChoNghi20s) { display.setCursor(X_chuChay + burnShiftX, 85 + burnShiftY); display.print(chuoiChayTongHop); }
+      }
     } else {
       display.setTextSize(1);
       if (blinkPhase) { display.setCursor(4 + burnShiftX, 35 + burnShiftY); display.print(F("WAIT")); display.setCursor(1 + burnShiftX, 50 + burnShiftY); display.print(F("-ING")); display.setCursor(-2 + burnShiftX, 69 + burnShiftY); display.print(F("EARTH")); }
@@ -364,7 +463,7 @@ void loop() {
   }
 
   // --- LED HARDWARE PROCESS ---
-  unsigned long ledCycle = now % 6000;
+  unsigned long ledCycle = now % 3000;
   if (ledCycle < 50) { ledcWrite(LED_PIN_5, ledBrightness); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, 0); } 
   else if (ledCycle >= 120 && ledCycle < 170) { ledcWrite(LED_PIN_5, ledBrightness); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, 0); } 
   else if (ledCycle >= 300 && ledCycle < 350) { ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, ledBrightness); ledcWrite(LED_PIN_6, 0); } 
