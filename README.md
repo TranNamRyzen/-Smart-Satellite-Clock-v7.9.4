@@ -69,7 +69,7 @@ unsigned long lastScrollTime = 0;
 unsigned long waitStartTime = 0;
 bool dangChoNghi20s = false;               
 String chuoiChayTongHop = "";              
-String chuoiChayOwmDungSan = "";           // CHƯA CÓ MẠNG THÌ KHÔNG GHI GÌ CẢ ANH NAM NHÉ!
+String chuoiChayDungSan = "";           // CHƯA CÓ MẠNG THÌ KHÔNG GHI GÌ CẢ 
 
 // --- TỌA ĐỘ 2 ĐÁM MÂY BAY LƯỚT LỆCH PHA TẦNG 3 ---
 int X_may1 = -16; 
@@ -199,7 +199,7 @@ void layThoiTietVeTinhOnline() {
       snprintf(
         formatCheck,
         sizeof(formatCheck),
-        " - %s - T:%d*C H:%d%% - DU BAO %02dH: %s (METEO SYNC AT: %02d:%02d)", 
+        " - %s - T:%doC H:%d%% - DU BAO %02dH: %s (METEO SYNC: %02d:%02d)", 
         textTrangThai.c_str(),
         webTemp,
         webHum,
@@ -209,7 +209,7 @@ void layThoiTietVeTinhOnline() {
         phutCapNhatAPI
       );
 
-      chuoiChayOwmDungSan = String(F("P.MY NGAI - P.CAO LANH, DONG THAP")) + String(formatCheck);
+      chuoiChayDungSan = String(F("P.MY NGAI - P.CAO LANH, DONG THAP")) + String(formatCheck);
 
     } else {
       coDuLieuOnline = false;
@@ -443,7 +443,7 @@ void loop() {
       display.setTextSize(1); display.setCursor(4 + burnShiftX, 71 + burnShiftY); display.print(sStr); display.print(F("s")); 
 
       if (dangChayCheDoOffline) { chuoiChayTongHop = F("SENSOR SHT3X"); } 
-      else { chuoiChayTongHop = chuoiChayOwmDungSan; } 
+      else { chuoiChayTongHop = chuoiChayDungSan; } 
 
       if (chuoiChayTongHop.length() > 0) {
         int doRongChuoi = chuoiChayTongHop.length() * 6;
@@ -462,4 +462,42 @@ void loop() {
         if (blinkPhase) { 
           display.setCursor(4 + burnShiftX, 35 + burnShiftY);  display.print(F("WAIT")); 
           display.setCursor(1 + burnShiftX, 50 + burnShiftY);  display.print(F("-ING")); 
-          display.setCursor(-2 + burnShiftX, 69 + burnShiftY
+          display.setCursor(-2 + burnShiftX, 69 + burnShiftY); display.print(F("EARTH")); 
+        }
+      } 
+      else {
+        // 4 giây sau lật trang hiện thông số T và H cỡ to rõ nét
+        display.setTextSize(1);
+        if (isSensorOnline && !isnan(filteredTemp) && !isnan(filteredHum)) {
+          display.setCursor(1 + burnShiftX, 26 + burnShiftY); display.print(F("T:"));
+          display.print((int)filteredTemp); display.print((char)247); display.print(F("C"));
+          
+          display.setCursor(1 + burnShiftX, 54 + burnShiftY); display.print(F("H:"));
+          display.print((int)filteredHum); display.print(F("%"));
+          
+          display.setCursor(1 + burnShiftX, 82 + burnShiftY);
+          display.print(F("LOCAL"));
+        } else {
+          display.setCursor(1 + burnShiftX, 35 + burnShiftY); display.print(F("SENS"));
+          display.setCursor(1 + burnShiftX, 55 + burnShiftY); display.print(F("ERR!"));
+        }
+      }
+    }
+
+    // --- TẦNG 3: METEO FOOTER ---
+    veChuyenTrangIconFooter(16, 108, laBanDem, now);
+
+    display.display();
+  }
+
+  // --- LED HARDWARE PROCESS ---
+  unsigned long ledCycle = now % 3000;
+  if (ledCycle < 50) { ledcWrite(LED_PIN_5, ledBrightness); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, 0); } 
+  else if (ledCycle >= 120 && ledCycle < 170) { ledcWrite(LED_PIN_5, ledBrightness); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, 0); } 
+  else if (ledCycle >= 300 && ledCycle < 350) { ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, ledBrightness); ledcWrite(LED_PIN_6, 0); } 
+  else if (ledCycle >= 420 && ledCycle < 470) { ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, ledBrightness); ledcWrite(LED_PIN_6, 0); } 
+  else if (ledCycle >= 600 && ledCycle < 650) { ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, ledBrightness); } 
+  else if (ledCycle >= 720 && ledCycle < 770) { ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, ledBrightness); } 
+  else { ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, 0); }
+  delay(10);
+}
