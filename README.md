@@ -1,5 +1,5 @@
 /* =============================================================================================
- * 🚀 SMART SATELLITE SYSTEM - v15 (OPEN-METEO HOURLY FORECAST EDITION)
+ * 🚀 SMART SATELLITE SYSTEM - v15.1 (INSTANT SENSOR ON BOOT EDITION)
  * [PROJECT MANAGER]  : TRAN NAM
  * SOURCE DESIGN      : HuyVector & Gemini AI Collaborator
  * =============================================================================================
@@ -52,9 +52,9 @@ WiFiManager wm;
 String lat = "10.4851";
 String lon = "105.6176";
 
-// --- QUẢN LÝ BIẾN TOÀN CỤC THỜI TIẾT v15 ---
+// --- QUẢN LÝ BIẾN TOÀN CỤC THỜI TIẾT v15.1 ---
 String trangThaiThoiTiet = "NANG";         
-String duBao1HToi = "";                    // CHƯA CÓ MẠNG THÌ ĐỂ TRỐNG TRƠN
+String duBao1HToi = "";                    
 bool coDuLieuOnline = false;               
 int gioCapNhatAPI = 0, phutCapNhatAPI = 0;  
 int gioHienTaiHeThong = 12;                
@@ -194,12 +194,12 @@ void layThoiTietVeTinhOnline() {
       coDuLieuOnline = true;
       thoiGianCapNhatMangCuoi = millis();
 
-      // 4️⃣ GHÉP CHUỖI THÀNH PHẨM KHI ĐÃ CÓ MẠNG NGON LÀNH
+      // 4️⃣ GHÉP CHUỖI THÀNH PHẨM V15.1 - ĐỔI SANG METEO SYNC
       char formatCheck[256];
       snprintf(
         formatCheck,
         sizeof(formatCheck),
-        " - %s - T:%doC H:%d%% - DU BAO %02dH: %s (SYNC: %02d:%02d)", 
+        " - %s - T:%d*C H:%d%% - DU BAO %02dH: %s (METEO SYNC AT: %02d:%02d)", 
         textTrangThai.c_str(),
         webTemp,
         webHum,
@@ -240,7 +240,7 @@ void veChuyenTrangIconFooter(int x_icon_base, int y_icon, bool checkDem, unsigne
   int y = y_icon + iconShiftY;
   unsigned long pulseModulo = currentMillis % 15000;
 
-  // 1️⃣ MẤT MẠNG: Chỉ hiện SHT3x tại chỗ
+  // 1️⃣ MẤT MẠNG / CHƯA SYNCHRONIZED: Hiện SHT3x tại chỗ ở đáy
   if (!coDuLieuOnline) {
     if (isSensorOnline && !isnan(filteredTemp) && !isnan(filteredHum)) {
       display.setCursor(1 + textShiftX, 102); 
@@ -254,7 +254,7 @@ void veChuyenTrangIconFooter(int x_icon_base, int y_icon, bool checkDem, unsigne
     return; 
   }
 
-  // 2️⃣ CÓ MẠNG: Hiện số đo SHT31
+  // 2️⃣ CÓ MẠNG: Hiện số đo SHT31 ở chu kỳ đầu
   if (pulseModulo < 7000) {
     if (isSensorOnline && !isnan(filteredTemp) && !isnan(filteredHum)) {
       display.setCursor(1 + textShiftX, 102); 
@@ -268,7 +268,7 @@ void veChuyenTrangIconFooter(int x_icon_base, int y_icon, bool checkDem, unsigne
     return;
   }
 
-  // 3️⃣ CÓ MẠNG: Vẽ các Icon
+  // 3️⃣ CÓ MẠNG: Vẽ các Icon động nghệ thuật
   if (trangThaiThoiTiet == "NANG") {
     if (checkDem) {
       int x_trang = x - 4; int y_trang = y - 4; 
@@ -329,7 +329,7 @@ void setup() {
   display.setCursor(1, 10);  display.print(F("SMART"));
   display.setCursor(1, 25);  display.print(F("SAT"));      
   display.setCursor(1, 40);  display.print(F("SYS"));      
-  display.setCursor(1, 55);  display.print(F("v15."));    
+  display.setCursor(1, 55);  display.print(F("v15.1"));    
   display.drawFastHLine(0, 75, 32, SSD1306_WHITE);
   display.setCursor(1, 85);  display.print(F("READY"));     
   display.display(); delay(2500);
@@ -392,6 +392,7 @@ void loop() {
     else { laBanDem = true; ledBrightness = LED_NIGHT_BRIGHTNESS; }
   }
 
+  // --- ĐỌC CẢM BIẾN LIÊN TỤC ĐỂ PHỤC VỤ HIỂN THỊ ĐẦU BUỔI ---
   bool sensorReadDone = false;
   if (now - lastSensorRead > 2000) {
     rawTemp = sht31.readTemperature(); rawHum = sht31.readHumidity(); lastSensorRead = now; sensorReadDone = true;
@@ -436,7 +437,7 @@ void loop() {
       }
     }
 
-    // --- TẦNG 2: CORE CLOCK & CHỮ CHẠY ---
+    // --- TẦNG 2: CORE CLOCK & CHỮ CHẠY / SENSOR ON BOOT ---
     if (hasFirstSyncEver) {
       display.setTextSize(2); display.setCursor(4 + burnShiftX, 28 + burnShiftY); display.print(hStr); display.setCursor(4 + burnShiftX, 49 + burnShiftY); display.print(mStr);
       display.setTextSize(1); display.setCursor(4 + burnShiftX, 71 + burnShiftY); display.print(sStr); display.print(F("s")); 
@@ -444,32 +445,21 @@ void loop() {
       if (dangChayCheDoOffline) { chuoiChayTongHop = F("SENSOR SHT3X"); } 
       else { chuoiChayTongHop = chuoiChayOwmDungSan; } 
 
-      // KIỂM TRA NẾU CHUỖI CÒN RỖNG THÌ KHÔNG IN GÌ RA MÀN HÌNH TẦNG 2 HẾT
       if (chuoiChayTongHop.length() > 0) {
         int doRongChuoi = chuoiChayTongHop.length() * 6;
         if (dangChoNghi20s) { if (now - waitStartTime >= 20000) { dangChoNghi20s = false; X_chuChay = 32; } } 
         else { if (now - lastScrollTime >= 80) { lastScrollTime = now; X_chuChay--; if (X_chuChay <= -doRongChuoi) { dangChoNghi20s = true; waitStartTime = now; } } }
         if (!dangChoNghi20s) { display.setCursor(X_chuChay + burnShiftX, 85 + burnShiftY); display.print(chuoiChayTongHop); }
       }
-    } else {
-      display.setTextSize(1);
-      if (blinkPhase) { display.setCursor(4 + burnShiftX, 35 + burnShiftY); display.print(F("WAIT")); display.setCursor(1 + burnShiftX, 50 + burnShiftY); display.print(F("-ING")); display.setCursor(-2 + burnShiftX, 69 + burnShiftY); display.print(F("EARTH")); }
-    }
-
-    // --- TẦNG 3: METEO FOOTER ---
-    veChuyenTrangIconFooter(16, 108, laBanDem, now);
-
-    display.display();
-  }
-
-  // --- LED HARDWARE PROCESS ---
-  unsigned long ledCycle = now % 3000;
-  if (ledCycle < 50) { ledcWrite(LED_PIN_5, ledBrightness); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, 0); } 
-  else if (ledCycle >= 120 && ledCycle < 170) { ledcWrite(LED_PIN_5, ledBrightness); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, 0); } 
-  else if (ledCycle >= 300 && ledCycle < 350) { ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, ledBrightness); ledcWrite(LED_PIN_6, 0); } 
-  else if (ledCycle >= 420 && ledCycle < 470) { ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, ledBrightness); ledcWrite(LED_PIN_6, 0); } 
-  else if (ledCycle >= 600 && ledCycle < 650) { ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, ledBrightness); } 
-  else if (ledCycle >= 720 && ledCycle < 770) { ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, ledBrightness); } 
-  else { ledcWrite(LED_PIN_5, 0); ledcWrite(LED_PIN_4, 0); ledcWrite(LED_PIN_6, 0); }
-  delay(10);
-}
+    } 
+    else {
+      // 🔥 LOGIC PHÁT TRIỂN THÊM: CHƯA CÓ WIFI THÌ HIỂN THỊ LẬT TRANG SHT31 TẠI TẦNG 2
+      unsigned long bootModulo = now % 8000; // Vòng lặp 8 giây
+      
+      if (bootModulo < 4000) {
+        // 4 giây đầu hiện trạng thái chờ Trái Đất kết nối
+        display.setTextSize(1);
+        if (blinkPhase) { 
+          display.setCursor(4 + burnShiftX, 35 + burnShiftY);  display.print(F("WAIT")); 
+          display.setCursor(1 + burnShiftX, 50 + burnShiftY);  display.print(F("-ING")); 
+          display.setCursor(-2 + burnShiftX, 69 + burnShiftY
